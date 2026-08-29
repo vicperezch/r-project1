@@ -1,0 +1,10 @@
+bin/
+logs/
+workspace/
+
+# Local overrides, may contain classmate server configs or secrets
+.env
+configs/servers.local.json
+
+*.test
+coverage.out

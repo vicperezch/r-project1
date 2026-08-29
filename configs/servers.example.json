@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "airline": {
+      "type": "stdio",
+      "command": "./bin/airline-mcp",
+      "args": ["-transport", "stdio"]
+    },
+    "filesystem": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "./workspace"]
+    },
+    "git": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["mcp-server-git", "--repository", "."]
+    }
+  }
+}
