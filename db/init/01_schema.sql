@@ -21,7 +21,14 @@ create table flights (
     business_capacity int not null default 0 check (business_capacity >= 0),
     status text not null default 'scheduled'
         check (status in ('scheduled', 'cancelled', 'departed')),
+    -- Set when status becomes 'cancelled'. Reps need to know why a flight went
+    -- down, and the reassignment record cites it.
+    cancellation_reason text,
+    cancelled_at timestamptz,
     constraint flights_business_fits_capacity check (business_capacity <= capacity),
+    constraint flights_cancelled_has_reason check (
+        (status = 'cancelled') = (cancelled_at is not null)
+    ),
     constraint flights_arrives_after_departs check (arrives_at > departs_at),
     constraint flights_distinct_endpoints check (origin <> destination)
 );

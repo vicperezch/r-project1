@@ -15,6 +15,7 @@ import (
 const flightSelect = `
 select f.id, f.flight_no, f.origin, f.destination, f.departs_at, f.arrives_at,
        f.aircraft, f.capacity, f.business_capacity, f.status,
+       coalesce(f.cancellation_reason, ''), f.cancelled_at,
        a.seats_taken, a.seats_available, a.business_available, a.economy_available
 from flights f
 join flight_availability a on a.flight_id = f.id`
@@ -25,6 +26,7 @@ func scanFlight(row pgx.Row) (domain.Flight, error) {
 	err := row.Scan(
 		&f.ID, &f.FlightNo, &f.Origin, &f.Destination, &f.DepartsAt, &f.ArrivesAt,
 		&f.Aircraft, &f.Capacity, &f.BusinessCapacity, &f.Status,
+		&f.CancellationReason, &f.CancelledAt,
 		&av.SeatsTaken, &av.SeatsAvailable, &av.BusinessAvailable, &av.EconomyAvailable,
 	)
 	if err != nil {

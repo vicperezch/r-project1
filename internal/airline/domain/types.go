@@ -39,6 +39,10 @@ type Flight struct {
 	BusinessCapacity int          `json:"business_capacity"`
 	Status           FlightStatus `json:"status"`
 
+	// Set only when Status is cancelled.
+	CancellationReason string     `json:"cancellation_reason,omitempty"`
+	CancelledAt        *time.Time `json:"cancelled_at,omitempty"`
+
 	// Availability is set only by queries that join flight_availability.
 	Availability *Availability `json:"availability,omitempty"`
 }
