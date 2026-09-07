@@ -35,5 +35,6 @@ func New(st *store.Store) *mcp.Server {
 	d := &deps{store: st}
 	registerFlightTools(srv, d)
 	registerIrregularityTools(srv, d)
+	registerReassignmentTools(srv, d)
 	return srv
 }

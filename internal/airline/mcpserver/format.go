@@ -140,3 +140,18 @@ func writePassengerList(b *strings.Builder, vs []passengerView) {
 		b.WriteByte('\n')
 	}
 }
+
+func humanMinutes(m int) string {
+	sign := ""
+	if m < 0 {
+		sign, m = "-", -m
+	}
+	return fmt.Sprintf("%s%dh%02dm", sign, m/60, m%60)
+}
+
+func downgradeNote(downgraded bool) string {
+	if downgraded {
+		return " (downgraded)"
+	}
+	return ""
+}

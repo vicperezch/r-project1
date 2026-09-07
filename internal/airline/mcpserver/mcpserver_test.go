@@ -90,6 +90,7 @@ func TestListToolsExposesFlightTools(t *testing.T) {
 	for _, name := range []string{
 		"search_flights", "get_flight_details",
 		"cancel_flight", "list_affected_passengers", "get_booking",
+		"find_reassignment_options", "apply_reassignment",
 	} {
 		tool, ok := got[name]
 		if !ok {
