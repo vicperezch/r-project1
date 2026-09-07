@@ -12,6 +12,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 
+	"r-project1/internal/host"
 	"r-project1/internal/llm"
 )
 
@@ -35,6 +36,7 @@ type REPL struct {
 	in       io.Reader
 	out      io.Writer
 	commands map[string]*Command
+	host     *host.Host
 }
 
 func New(responder Responder, in io.Reader, out io.Writer) *REPL {

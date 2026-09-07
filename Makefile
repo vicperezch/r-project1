@@ -1,4 +1,4 @@
-.PHONY: build chatbot airline test fmt vet tidy clean run-chatbot run-airline
+.PHONY: build chatbot airline test fmt vet tidy clean run-chatbot run-airline run-airline-http
 
 BIN := bin
 
@@ -30,6 +30,9 @@ run-chatbot: chatbot
 
 run-airline: airline
 	./$(BIN)/airline-mcp -transport stdio
+
+run-airline-http: airline
+	DATABASE_URL=$(DATABASE_URL) ./$(BIN)/airline-mcp -transport http -addr :8080
 
 # Local Postgres for development and the store integration tests. Superseded by
 # docker compose once the full stack lands. Docker needs sudo on this machine.

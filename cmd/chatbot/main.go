@@ -9,6 +9,8 @@ import (
 	"syscall"
 
 	"r-project1/internal/chat"
+	"r-project1/internal/config"
+	"r-project1/internal/host"
 	"r-project1/internal/llm"
 )
 
@@ -59,9 +61,35 @@ func main() {
 	defer stop()
 
 	client := llm.New(llm.Config{Model: o.model, System: systemPrompt})
+	repl := chat.New(client, os.Stdin, os.Stdout)
 
-	if err := chat.New(client, os.Stdin, os.Stdout).Run(ctx); err != nil {
+	// A missing or broken servers file is not fatal: the chatbot is still a
+	// usable assistant without any MCP server attached.
+	if h := connectServers(ctx, o.serversPath); h != nil {
+		defer h.Close()
+		repl.AttachHost(h)
+	}
+
+	if err := repl.Run(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "chatbot:", err)
 		os.Exit(1)
 	}
+}
+
+func connectServers(ctx context.Context, path string) *host.Host {
+	cfg, err := config.Load(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v, continuing with no MCP servers\n", err)
+		return nil
+	}
+
+	h := host.New(host.Options{ChildStderr: os.Stderr})
+	h.Connect(ctx, cfg)
+
+	fmt.Fprintf(os.Stderr, "connected to %d of %d MCP server(s), %d tool(s) available\n",
+		h.ConnectedCount(), len(h.Servers()), h.ToolCount())
+	for _, s := range h.Failures() {
+		fmt.Fprintf(os.Stderr, "  %s failed: %v\n", s.Name, s.Err)
+	}
+	return h
 }
