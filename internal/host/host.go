@@ -21,6 +21,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"r-project1/internal/config"
+	"r-project1/internal/mcplog"
 )
 
 const (
@@ -66,6 +67,8 @@ type Options struct {
 	ChildStderr io.Writer
 	// Wrap lets the interaction log sit between the session and the transport.
 	Wrap func(serverName string, t mcp.Transport) mcp.Transport
+	// Log records tool calls. Protocol frames are recorded separately by Wrap.
+	Log *mcplog.Logger
 }
 
 type Host struct {

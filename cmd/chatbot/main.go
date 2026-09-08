@@ -8,10 +8,13 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"r-project1/internal/chat"
 	"r-project1/internal/config"
 	"r-project1/internal/host"
 	"r-project1/internal/llm"
+	"r-project1/internal/mcplog"
 )
 
 const systemPrompt = `You are a terminal assistant for airline counter and call center staff.
@@ -63,9 +66,17 @@ func main() {
 	client := llm.New(llm.Config{Model: o.model, System: systemPrompt})
 	repl := chat.New(client, os.Stdin, os.Stdout)
 
+	logger, err := mcplog.New(o.logDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v, MCP traffic will not be written to disk\n", err)
+		logger = mcplog.Discarding()
+	}
+	defer logger.Close()
+	repl.AttachLog(logger)
+
 	// A missing or broken servers file is not fatal: the chatbot is still a
 	// usable assistant without any MCP server attached.
-	if h := connectServers(ctx, o.serversPath); h != nil {
+	if h := connectServers(ctx, o.serversPath, logger); h != nil {
 		defer h.Close()
 		repl.AttachHost(h)
 	}
@@ -76,18 +87,29 @@ func main() {
 	}
 }
 
-func connectServers(ctx context.Context, path string) *host.Host {
+func connectServers(ctx context.Context, path string, logger *mcplog.Logger) *host.Host {
 	cfg, err := config.Load(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: %v, continuing with no MCP servers\n", err)
 		return nil
 	}
 
-	h := host.New(host.Options{ChildStderr: os.Stderr})
+	h := host.New(host.Options{
+		ChildStderr: os.Stderr,
+		Log:         logger,
+		// Every JSON-RPC frame, including initialize and tools/list, is
+		// captured by wrapping the transport.
+		Wrap: func(name string, t mcp.Transport) mcp.Transport {
+			return &mcp.LoggingTransport{Transport: t, Writer: logger.ProtocolWriter(name)}
+		},
+	})
 	h.Connect(ctx, cfg)
 
 	fmt.Fprintf(os.Stderr, "connected to %d of %d MCP server(s), %d tool(s) available\n",
 		h.ConnectedCount(), len(h.Servers()), h.ToolCount())
+	if p := logger.Path(); p != "" {
+		fmt.Fprintf(os.Stderr, "logging MCP traffic to %s\n", p)
+	}
 	for _, s := range h.Failures() {
 		fmt.Fprintf(os.Stderr, "  %s failed: %v\n", s.Name, s.Err)
 	}

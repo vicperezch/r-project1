@@ -3,9 +3,11 @@ package chat
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"r-project1/internal/host"
+	"r-project1/internal/mcplog"
 )
 
 // AttachHost registers the commands that inspect connected MCP servers.
@@ -17,6 +19,40 @@ func (r *REPL) AttachHost(h *host.Host) {
 	r.host = h
 	r.Register(&Command{Name: "servers", Help: "show the configured MCP servers and their status", Run: r.cmdServers})
 	r.Register(&Command{Name: "tools", Help: "list the tools discovered on those servers", Run: r.cmdTools})
+}
+
+// AttachLog registers the command that shows the MCP interaction log.
+func (r *REPL) AttachLog(l *mcplog.Logger) {
+	r.log = l
+	r.Register(&Command{Name: "log", Help: "show recent MCP traffic, /log 40 for more", Run: r.cmdLog})
+}
+
+func (r *REPL) cmdLog(_ context.Context, args string) (bool, error) {
+	if r.log == nil {
+		fmt.Fprintln(r.out, "no interaction log is running")
+		return false, nil
+	}
+
+	n := 20
+	if args != "" {
+		parsed, err := strconv.Atoi(strings.Fields(args)[0])
+		if err != nil {
+			return false, fmt.Errorf("expected a number of entries, got %q", args)
+		}
+		n = parsed
+	}
+
+	entries := r.log.Recent(n)
+	if len(entries) == 0 {
+		fmt.Fprintf(r.out, "no MCP traffic logged yet, writing to %s\n", r.log.Path())
+		return false, nil
+	}
+	fmt.Fprintf(r.out, "last %d of %d entries, full log at %s\n\n",
+		len(entries), r.log.Count(), r.log.Path())
+	for _, e := range entries {
+		fmt.Fprintln(r.out, mcplog.Format(e))
+	}
+	return false, nil
 }
 
 func (r *REPL) cmdServers(context.Context, string) (bool, error) {

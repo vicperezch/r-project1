@@ -14,6 +14,7 @@ import (
 
 	"r-project1/internal/host"
 	"r-project1/internal/llm"
+	"r-project1/internal/mcplog"
 )
 
 // Responder is what the REPL needs from the LLM client. Keeping it an
@@ -37,6 +38,7 @@ type REPL struct {
 	out      io.Writer
 	commands map[string]*Command
 	host     *host.Host
+	log      *mcplog.Logger
 }
 
 func New(responder Responder, in io.Reader, out io.Writer) *REPL {

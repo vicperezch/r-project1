@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"r-project1/internal/mcplog"
 )
 
 // Result is a tool call flattened into what the Anthropic API wants back.
@@ -33,6 +35,13 @@ func (h *Host) CallTool(ctx context.Context, name string, args map[string]any) (
 
 	res := Result{ServerName: entry.ServerName, ToolName: entry.ToolName}
 
+	seq := h.opts.Log.NextSeq()
+	h.opts.Log.Write(mcplog.Entry{
+		Seq: seq, Level: mcplog.LevelCall, Server: entry.ServerName,
+		Direction: mcplog.DirectionRequest, Method: "tools/call",
+		Tool: entry.ToolName, Params: args,
+	})
+
 	callCtx, cancel := context.WithTimeout(ctx, h.opts.CallTimeout)
 	defer cancel()
 
@@ -42,12 +51,27 @@ func (h *Host) CallTool(ctx context.Context, name string, args map[string]any) (
 		Arguments: args,
 	})
 	res.Duration = time.Since(start)
+
+	record := mcplog.Entry{
+		Seq: seq, Level: mcplog.LevelCall, Server: entry.ServerName,
+		Direction: mcplog.DirectionResponse, Method: "tools/call",
+		Tool: entry.ToolName, DurationMS: res.Duration.Milliseconds(),
+	}
 	if err != nil {
+		record.Error = err.Error()
+		record.IsError = true
+		h.opts.Log.Write(record)
 		return res, fmt.Errorf("call %s: %w", name, err)
 	}
 
 	res.IsError = out.IsError
 	res.Text, res.Truncated = h.flatten(out)
+
+	record.IsError = res.IsError
+	record.Truncated = res.Truncated
+	record.Result = res.Text
+	h.opts.Log.Write(record)
+
 	return res, nil
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"r-project1/internal/config"
+	"r-project1/internal/mcplog"
 )
 
 type echoIn struct {
@@ -194,5 +195,84 @@ func TestDisabledServersAreSkipped(t *testing.T) {
 	}
 	if s := h.Servers()[0]; s.Status() != "disabled" {
 		t.Errorf("status %q, want disabled", s.Status())
+	}
+}
+
+func TestToolCallsAreLoggedAsAPairedRequestAndResponse(t *testing.T) {
+	log := mcplog.Discarding()
+	h := connectedHost(t, map[string]config.Server{
+		"alpha": {Type: config.TypeHTTP, URL: stubMCPServer(t)},
+	}, Options{Log: log})
+
+	if _, err := h.CallTool(context.Background(), "alpha__echo", map[string]any{"text": "hi"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var calls []mcplog.Entry
+	for _, e := range log.Recent(0) {
+		if e.Level == mcplog.LevelCall {
+			calls = append(calls, e)
+		}
+	}
+	if len(calls) != 2 {
+		t.Fatalf("logged %d call entries, want a request and a response", len(calls))
+	}
+	req, resp := calls[0], calls[1]
+	if req.Direction != mcplog.DirectionRequest || resp.Direction != mcplog.DirectionResponse {
+		t.Errorf("directions %q and %q", req.Direction, resp.Direction)
+	}
+	if req.Seq == 0 || req.Seq != resp.Seq {
+		t.Errorf("seqs %d and %d must match to pair up", req.Seq, resp.Seq)
+	}
+	if req.Server != "alpha" || req.Tool != "echo" {
+		t.Errorf("request attributed to %s/%s", req.Server, req.Tool)
+	}
+	if resp.Result == nil {
+		t.Error("response entry carries no result")
+	}
+}
+
+func TestFailingToolCallIsStillLogged(t *testing.T) {
+	log := mcplog.Discarding()
+	h := connectedHost(t, map[string]config.Server{
+		"alpha": {Type: config.TypeHTTP, URL: stubMCPServer(t)},
+	}, Options{Log: log})
+
+	if _, err := h.CallTool(context.Background(), "alpha__boom", map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	entries := log.Recent(0)
+	last := entries[len(entries)-1]
+	if !last.IsError || last.Direction != mcplog.DirectionResponse {
+		t.Errorf("tool failure not recorded as an error response: %+v", last)
+	}
+}
+
+func TestProtocolFramesAreCapturedThroughWrap(t *testing.T) {
+	log := mcplog.Discarding()
+	h := New(Options{
+		ChildStderr: io.Discard,
+		Log:         log,
+		Wrap: func(name string, tr mcp.Transport) mcp.Transport {
+			return &mcp.LoggingTransport{Transport: tr, Writer: log.ProtocolWriter(name)}
+		},
+	})
+	h.Connect(context.Background(), &config.File{Servers: map[string]config.Server{
+		"alpha": {Type: config.TypeHTTP, URL: stubMCPServer(t)},
+	}})
+	t.Cleanup(h.Close)
+
+	methods := map[string]bool{}
+	for _, e := range log.Recent(0) {
+		if e.Level == mcplog.LevelProtocol && e.Method != "" {
+			methods[e.Method] = true
+		}
+	}
+	// Requirement 3 is about all traffic, not only tool calls: the handshake
+	// and discovery must show up too.
+	for _, want := range []string{"initialize", "tools/list"} {
+		if !methods[want] {
+			t.Errorf("protocol log is missing %q, captured %v", want, methods)
+		}
 	}
 }
