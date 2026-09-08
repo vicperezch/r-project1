@@ -90,7 +90,9 @@ chat:
 # separate from the project history.
 workspace-init:
 	mkdir -p workspace
-	git -C workspace rev-parse --git-dir >/dev/null 2>&1 || ( \
+	@# Test for workspace/.git directly. git rev-parse searches upward and would
+	@# find this project's own repository, so the guard would never fire.
+	test -d workspace/.git || ( \
 		git -C workspace init -q && \
 		printf 'Demo workspace for the filesystem and git MCP servers.\n' > workspace/README.md && \
 		git -C workspace add README.md && \

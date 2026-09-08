@@ -2,6 +2,7 @@ package service
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -257,4 +258,66 @@ func TestBuildPlanIsDeterministic(t *testing.T) {
 func nil2(a Assignment) Assignment {
 	a.Alternatives = nil
 	return a
+}
+
+func TestWindowBracketsTheCancelledDeparture(t *testing.T) {
+	f := cancelledFlight()
+	from, to := Window(f)
+
+	if got := f.DepartsAt.Sub(from); got != 2*time.Hour {
+		t.Errorf("window starts %v before departure, want 2h", got)
+	}
+	if got := to.Sub(f.DepartsAt); got != 48*time.Hour {
+		t.Errorf("window ends %v after departure, want 48h", got)
+	}
+	// A flight leaving slightly earlier than the cancelled one is still a
+	// candidate, which is the point of the lead.
+	earlier := f.DepartsAt.Add(-time.Hour)
+	if earlier.Before(from) {
+		t.Error("a flight one hour earlier should fall inside the window")
+	}
+}
+
+func TestCandidatesFromCarriesSeatCounts(t *testing.T) {
+	flights := []domain.Flight{
+		{ID: "WITH", Availability: &domain.Availability{BusinessAvailable: 2, EconomyAvailable: 5}},
+		{ID: "WITHOUT"},
+	}
+	got := CandidatesFrom(flights)
+	if len(got) != 2 {
+		t.Fatalf("got %d candidates", len(got))
+	}
+	if got[0].BusinessSeats != 2 || got[0].EconomySeats != 5 {
+		t.Errorf("seats lost: %+v", got[0])
+	}
+	// A flight queried without the availability join has no seats to give, and
+	// must not be treated as empty and bookable.
+	if got[1].BusinessSeats != 0 || got[1].EconomySeats != 0 {
+		t.Errorf("missing availability should mean no seats, got %+v", got[1])
+	}
+	if len(CandidatesFrom(nil)) != 0 {
+		t.Error("nil input should produce no candidates")
+	}
+}
+
+func TestPlanSummary(t *testing.T) {
+	plan := BuildPlan(cancelledFlight(),
+		[]domain.AffectedBooking{
+			pax("AAA111", domain.TierNone, domain.CabinEconomy, 1),
+			pax("BBB222", domain.TierNone, domain.CabinEconomy, 2),
+		},
+		[]Candidate{cand("ONLY", 12, 15, 14, 45, 0, 5)}, 1)
+
+	got := plan.Summary()
+	for _, want := range []string{"2 of 2", "0 downgraded", "6h15m"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("summary %q is missing %q", got, want)
+		}
+	}
+
+	empty := BuildPlan(cancelledFlight(),
+		[]domain.AffectedBooking{pax("AAA111", domain.TierNone, domain.CabinEconomy, 1)}, nil, 1)
+	if !strings.Contains(empty.Summary(), "No seats") {
+		t.Errorf("a plan that placed nobody should say so: %q", empty.Summary())
+	}
 }

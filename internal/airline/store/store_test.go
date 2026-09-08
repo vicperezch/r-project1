@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -175,5 +176,27 @@ func TestListAirports(t *testing.T) {
 	}
 	if len(got) != 8 {
 		t.Fatalf("got %d airports, want 8", len(got))
+	}
+}
+
+// These two need no database.
+
+func TestNewRejectsAnEmptyDSN(t *testing.T) {
+	if _, err := New(context.Background(), ""); err == nil {
+		t.Fatal("expected an error for an empty dsn")
+	}
+}
+
+func TestConnectionErrorsDoNotLeakThePassword(t *testing.T) {
+	// The DSN reaches stderr and the log on a startup failure, so a password
+	// must never survive into the error text.
+	const password = "sup3rs3cret"
+	_, err := New(context.Background(),
+		"postgres://airline:"+password+"@nonexistent.invalid:5432/db?sslmode=bogus")
+	if err == nil {
+		t.Fatal("expected a connection error")
+	}
+	if strings.Contains(err.Error(), password) {
+		t.Fatalf("the password leaked into the error: %v", err)
 	}
 }

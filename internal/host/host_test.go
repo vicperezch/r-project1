@@ -276,3 +276,91 @@ func TestProtocolFramesAreCapturedThroughWrap(t *testing.T) {
 		}
 	}
 }
+
+func TestPrefixWriterTagsEachChildLine(t *testing.T) {
+	var out strings.Builder
+	w := prefixWriter{w: &out, prefix: "[git] "}
+
+	n, err := w.Write([]byte("starting up\nlistening\n"))
+	if err != nil || n != len("starting up\nlistening\n") {
+		t.Fatalf("write returned %d, %v", n, err)
+	}
+	got := out.String()
+	if got != "[git] starting up\n[git] listening\n" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestPrefixWriterSkipsBlankLines(t *testing.T) {
+	var out strings.Builder
+	w := prefixWriter{w: &out, prefix: "[x] "}
+	_, _ = w.Write([]byte("\n\nreal line\n\n"))
+	if got := out.String(); got != "[x] real line\n" {
+		t.Errorf("got %q, want only the real line prefixed", got)
+	}
+}
+
+func TestHeaderTransportAddsConfiguredHeaders(t *testing.T) {
+	var seen http.Header
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = r.Header.Clone()
+	}))
+	defer ts.Close()
+
+	client := httpClientWithHeaders(map[string]string{"Authorization": "Bearer token123"})
+	if client == nil {
+		t.Fatal("headers were configured but no client was built")
+	}
+	resp, err := client.Get(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if got := seen.Get("Authorization"); got != "Bearer token123" {
+		t.Errorf("Authorization = %q", got)
+	}
+	// With no headers the default client is used, which avoids wrapping for
+	// nothing.
+	if httpClientWithHeaders(nil) != nil {
+		t.Error("no headers should mean no custom client")
+	}
+}
+
+func TestRegistryEntriesAreReturnedInRegistrationOrder(t *testing.T) {
+	h := connectedHost(t, map[string]config.Server{
+		"alpha": {Type: config.TypeHTTP, URL: stubMCPServer(t)},
+	}, Options{})
+
+	entries := h.Registry().Entries()
+	if len(entries) != 2 {
+		t.Fatalf("got %d entries", len(entries))
+	}
+	for _, e := range entries {
+		if e.ServerName != "alpha" || e.Name == "" {
+			t.Errorf("bad entry %+v", e)
+		}
+	}
+}
+
+func TestStdioConnectEOFPointsAtTheChildOutput(t *testing.T) {
+	// A stdio server that dies during the handshake surfaces as a bare EOF,
+	// which on its own does not say why. The annotation says where to look.
+	stdio := &Server{Name: "git", Config: config.Server{Command: "mcp-server-git"}}
+	got := annotateConnectError(stdio, errors.New(`calling "initialize": client is closing: EOF`))
+	if !strings.Contains(got.Error(), "exited during startup") || !strings.Contains(got.Error(), "[git]") {
+		t.Errorf("unhelpful message: %v", got)
+	}
+
+	// An unrelated stdio failure is left alone.
+	other := annotateConnectError(stdio, errors.New("permission denied"))
+	if strings.Contains(other.Error(), "exited during startup") {
+		t.Errorf("only EOF should be annotated, got: %v", other)
+	}
+
+	// An HTTP server has no child process to look at.
+	httpSrv := &Server{Name: "airline", Config: config.Server{Type: config.TypeHTTP, URL: "http://x/mcp"}}
+	if got := annotateConnectError(httpSrv, errors.New("EOF")); strings.Contains(got.Error(), "exited during startup") {
+		t.Errorf("http servers have no child process: %v", got)
+	}
+}

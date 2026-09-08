@@ -138,7 +138,7 @@ func (h *Host) connectOne(ctx context.Context, s *Server) error {
 
 	session, err := client.Connect(connectCtx, transport, nil)
 	if err != nil {
-		return fmt.Errorf("connect: %w", err)
+		return fmt.Errorf("connect: %w", annotateConnectError(s, err))
 	}
 	s.Session = session
 
@@ -153,6 +153,20 @@ func (h *Host) connectOne(ctx context.Context, s *Server) error {
 		s.Tools = append(s.Tools, h.registry.Add(s.Name, session, tool))
 	}
 	return nil
+}
+
+// annotateConnectError points at the child's output when a stdio server dies
+// during the handshake. The transport reports that as a bare EOF, which says
+// nothing about why the process exited.
+func annotateConnectError(s *Server, err error) error {
+	if s.Config.ResolvedType() != config.TypeStdio {
+		return err
+	}
+	if !strings.Contains(err.Error(), "EOF") {
+		return err
+	}
+	return fmt.Errorf("%w (the server process exited during startup, look for [%s] lines above for what it printed)",
+		err, s.Name)
 }
 
 func (h *Host) transportFor(s *Server) (mcp.Transport, error) {

@@ -16,6 +16,7 @@ import (
 	"r-project1/internal/config"
 	"r-project1/internal/host"
 	"r-project1/internal/llm"
+	"r-project1/internal/mcplog"
 )
 
 type echoIn struct {
@@ -278,5 +279,102 @@ func TestSummariseArgsClipsLongInput(t *testing.T) {
 	}
 	if summariseArgs(nil) != "{}" {
 		t.Error("empty args should render as {}")
+	}
+}
+
+func TestFirstLineClipsAndFlattens(t *testing.T) {
+	if got := firstLine("one line"); got != "one line" {
+		t.Errorf("got %q", got)
+	}
+	if got := firstLine("first\nsecond\nthird"); got != "first" {
+		t.Errorf("multi line should keep only the first, got %q", got)
+	}
+	long := firstLine(strings.Repeat("x", 200))
+	if len(long) > 70 || !strings.HasSuffix(long, "...") {
+		t.Errorf("long description not clipped: %d chars, %q", len(long), long)
+	}
+	if got := firstLine("  padded  "); got != "padded" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestServersAndToolsCommandsDescribeTheHost(t *testing.T) {
+	s := &scriptedLLM{}
+	h := toolHost(t)
+	var out strings.Builder
+	r := New(s, strings.NewReader("/servers\n/tools\n/quit\n"), &out)
+	r.AttachHost(h)
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	got := out.String()
+	for _, want := range []string{"stub", "connected", "stub__read_thing", "stub__write_thing"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output is missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestToolsCommandFiltersByServerName(t *testing.T) {
+	s := &scriptedLLM{}
+	var out strings.Builder
+	r := New(s, strings.NewReader("/tools nosuchserver\n/quit\n"), &out)
+	r.AttachHost(toolHost(t))
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "stub__read_thing") {
+		t.Errorf("a filter that matches nothing should list nothing:\n%s", out.String())
+	}
+}
+
+func TestCommandsWithNoHostSaySo(t *testing.T) {
+	s := &scriptedLLM{}
+	var out strings.Builder
+	r := New(s, strings.NewReader("/servers\n/tools\n/quit\n"), &out)
+	// No AttachHost.
+	r.Register(&Command{Name: "servers", Help: "", Run: r.cmdServers})
+	r.Register(&Command{Name: "tools", Help: "", Run: r.cmdTools})
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "no MCP servers configured") || !strings.Contains(got, "no tools discovered") {
+		t.Errorf("missing host should be reported plainly:\n%s", got)
+	}
+}
+
+func TestLogCommandReportsTrafficAndRejectsBadArgs(t *testing.T) {
+	s := &scriptedLLM{}
+	logger := mcplog.Discarding()
+	var out strings.Builder
+	r := New(s, strings.NewReader("/log\n/log notanumber\n/quit\n"), &out)
+	r.AttachLog(logger)
+	logger.Write(mcplog.Entry{Seq: 1, Server: "airline", Direction: mcplog.DirectionRequest,
+		Method: "tools/call", Tool: "search_flights"})
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "search_flights") {
+		t.Errorf("log entry not shown:\n%s", got)
+	}
+	if !strings.Contains(got, "expected a number") {
+		t.Errorf("a bad argument should be reported:\n%s", got)
+	}
+}
+
+func TestLogCommandWithNoLogger(t *testing.T) {
+	s := &scriptedLLM{}
+	var out strings.Builder
+	r := New(s, strings.NewReader("/log\n/quit\n"), &out)
+	r.Register(&Command{Name: "log", Help: "", Run: r.cmdLog})
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "no interaction log") {
+		t.Errorf("missing logger should be reported:\n%s", out.String())
 	}
 }

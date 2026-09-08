@@ -20,7 +20,9 @@ func TestReadOnlyToolNamesNeedNoApproval(t *testing.T) {
 		"search_flights", "get_flight_details", "list_affected_passengers",
 		"get_booking", "find_reassignment_options", "read_file", "read_text_file",
 		"list_directory", "directory_tree", "search_files", "get_file_info",
-		"git_log", "git_status", "git_diff",
+		// The real tool names from Anthropic's git reference server.
+		"git_status", "git_diff_unstaged", "git_diff_staged", "git_diff",
+		"git_log", "git_show", "git_branch",
 		// "settings" must not trip the "set" token.
 		"get_settings", "list_presets",
 	}
@@ -34,8 +36,10 @@ func TestReadOnlyToolNamesNeedNoApproval(t *testing.T) {
 func TestStateChangingToolNamesRequireApproval(t *testing.T) {
 	risky := []string{
 		"cancel_flight", "apply_reassignment", "write_file", "edit_file",
-		"create_directory", "move_file", "delete_file", "git_commit",
-		"git_push", "git_checkout", "update_record", "run_command", "send_email",
+		"create_directory", "move_file", "delete_file", "update_record",
+		"run_command", "send_email",
+		// The real mutating tools from the git reference server.
+		"git_commit", "git_add", "git_reset", "git_create_branch", "git_checkout",
 	}
 	for _, name := range risky {
 		if !toolMayMutate(entry(name, nil)) {
