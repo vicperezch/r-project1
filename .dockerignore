@@ -1,0 +1,7 @@
+.git
+bin
+logs
+workspace
+docs
+*.md
+!README.md

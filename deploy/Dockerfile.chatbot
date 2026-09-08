@@ -1,0 +1,49 @@
+# Terminal chatbot and MCP host.
+#
+# Anthropic's filesystem and git reference servers are stdio only, one Node and
+# one Python, so they cannot be their own compose services. Both are installed
+# into this image at build time and spawned as subprocesses. Installing them
+# here rather than letting npx and uvx fetch at runtime keeps startup fast and
+# means the container works with no network.
+FROM golang:1.27-alpine AS build
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -o /out/chatbot ./cmd/chatbot
+
+FROM node:22-bookworm-slim
+
+# uv comes from its own image, which avoids needing curl or pip here.
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# Put tool binaries somewhere already on PATH.
+ENV UV_TOOL_BIN_DIR=/usr/local/bin
+
+RUN npm install -g @modelcontextprotocol/server-filesystem \
+ && npm cache clean --force
+RUN uv tool install mcp-server-git
+
+# The workspace is bind mounted from the host, so its files are owned by the
+# host user. Without this git refuses to operate on it.
+RUN git config --global --add safe.directory /workspace
+
+WORKDIR /app
+COPY --from=build /out/chatbot /usr/local/bin/chatbot
+COPY configs ./configs
+
+ENV CHATBOT_LOG_DIR=/app/logs
+RUN mkdir -p /app/logs
+
+# This image runs as root. The reference servers are installed with uv and npm
+# into root owned locations, and dropping privileges would mean relocating both
+# plus uv's managed Python. The cost is that files written to the mounted
+# logs directory are root owned on the host.
+ENTRYPOINT ["chatbot"]
+CMD ["--servers", "configs/servers.docker.json"]

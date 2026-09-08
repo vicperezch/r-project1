@@ -81,14 +81,34 @@ func TestLoadReportsAMissingFile(t *testing.T) {
 	}
 }
 
-func TestTheShippedExampleConfigIsValid(t *testing.T) {
-	f, err := Load("../../configs/servers.example.json")
-	if err != nil {
-		t.Fatalf("the example config must load: %v", err)
+func TestTheShippedConfigsAreValid(t *testing.T) {
+	for _, path := range []string{
+		"../../configs/servers.example.json",
+		"../../configs/servers.docker.json",
+	} {
+		f, err := Load(path)
+		if err != nil {
+			t.Fatalf("%s must load: %v", path, err)
+		}
+		for _, n := range []string{"airline", "filesystem", "git"} {
+			if _, ok := f.Servers[n]; !ok {
+				t.Errorf("%s is missing the %s server", path, n)
+			}
+		}
 	}
-	for _, n := range []string{"airline", "filesystem", "git"} {
-		if _, ok := f.Servers[n]; !ok {
-			t.Errorf("example config is missing the %s server", n)
+
+	// In the container the airline server is reached over the network, and the
+	// reference servers are the binaries baked into the image.
+	docker, err := Load("../../configs/servers.docker.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := docker.Servers["airline"].ResolvedType(); got != TypeHTTP {
+		t.Errorf("airline resolves to %q in docker, want http", got)
+	}
+	for _, n := range []string{"filesystem", "git"} {
+		if got := docker.Servers[n].ResolvedType(); got != TypeStdio {
+			t.Errorf("%s resolves to %q, want stdio", n, got)
 		}
 	}
 }

@@ -1,0 +1,19 @@
+# Airline MCP server. Static binary, so the runtime stage stays tiny.
+FROM golang:1.27-alpine AS build
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -o /out/airline-mcp ./cmd/airline-mcp
+
+FROM alpine:3.21
+RUN adduser -D -u 10001 airline
+WORKDIR /app
+COPY --from=build /out/airline-mcp /usr/local/bin/airline-mcp
+USER airline
+
+EXPOSE 8080
+ENTRYPOINT ["airline-mcp"]
+CMD ["-transport", "http", "-addr", ":8080"]

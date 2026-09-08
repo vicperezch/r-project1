@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "airline": {
+      "type": "http",
+      "url": "http://airline-mcp:8080/mcp"
+    },
+    "filesystem": {
+      "type": "stdio",
+      "command": "mcp-server-filesystem",
+      "args": ["/workspace"]
+    },
+    "git": {
+      "type": "stdio",
+      "command": "mcp-server-git",
+      "args": ["--repository", "/workspace"]
+    }
+  }
+}
