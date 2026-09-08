@@ -21,7 +21,9 @@ import (
 // interface lets the loop be tested without touching the API.
 type Responder interface {
 	Stream(ctx context.Context, conv *llm.Conversation, tools []anthropic.ToolUnionParam, out io.Writer) (*anthropic.Message, error)
+	Fit(ctx context.Context, conv *llm.Conversation, tools []anthropic.ToolUnionParam) (int, error)
 	Model() string
+	ContextLimit() int64
 }
 
 // Command is a slash command. Later steps register their own.
@@ -39,21 +41,35 @@ type REPL struct {
 	commands map[string]*Command
 	host     *host.Host
 	log      *mcplog.Logger
+
+	// input is owned by Run. The approval prompt reads from it too, because a
+	// second reader on stdin would steal lines from the loop.
+	input       <-chan string
+	autoApprove bool
+	maxRounds   int
 }
 
 func New(responder Responder, in io.Reader, out io.Writer) *REPL {
 	r := &REPL{
-		llm:      responder,
-		conv:     llm.NewConversation(),
-		in:       in,
-		out:      out,
-		commands: map[string]*Command{},
+		llm:       responder,
+		conv:      llm.NewConversation(),
+		in:        in,
+		out:       out,
+		commands:  map[string]*Command{},
+		maxRounds: DefaultMaxToolRounds,
 	}
 	r.registerBuiltins()
 	return r
 }
 
+// DefaultMaxToolRounds bounds one user turn, so a confused model cannot loop
+// on tools forever.
+const DefaultMaxToolRounds = 12
+
 func (r *REPL) Register(c *Command) { r.commands[c.Name] = c }
+
+// SetAutoApprove skips the confirmation prompt for state-changing tools.
+func (r *REPL) SetAutoApprove(v bool) { r.autoApprove = v }
 
 func (r *REPL) Conversation() *llm.Conversation { return r.conv }
 
@@ -87,6 +103,7 @@ func lines(r io.Reader) (<-chan string, <-chan error) {
 func (r *REPL) Run(ctx context.Context) error {
 	r.banner()
 	input, errc := lines(r.in)
+	r.input = input
 
 	for {
 		fmt.Fprint(r.out, "\nyou> ")
@@ -136,27 +153,64 @@ func (r *REPL) dispatch(ctx context.Context, line string) (bool, error) {
 	return cmd.Run(ctx, strings.TrimSpace(args))
 }
 
+// ask runs one user turn to completion, including any tool calls the model
+// makes along the way.
 func (r *REPL) ask(ctx context.Context, input string) error {
 	r.conv.AddUser(input)
 
-	fmt.Fprint(r.out, "\nclaude> ")
-	msg, err := r.llm.Stream(ctx, r.conv, r.Tools(), r.out)
-	if err != nil {
-		// Take the user turn back so a retry does not stack duplicates.
-		r.conv.RemoveLast()
-		return err
-	}
-	fmt.Fprintln(r.out)
+	for round := 0; round < r.maxRounds; round++ {
+		// Tool results from a filesystem or git server can be large, so the
+		// history is measured and trimmed before every request, not just at
+		// the start of a turn.
+		tools := r.Tools()
+		if dropped, err := r.llm.Fit(ctx, r.conv, tools); err != nil {
+			fmt.Fprintf(r.out, "\nwarning: could not measure context: %v\n", err)
+		} else if dropped > 0 {
+			fmt.Fprintf(r.out, "\n[context] dropped %d older message(s) to stay within the window\n", dropped)
+		}
 
-	r.conv.Append(msg.ToParam())
-	return r.afterMessage(ctx, msg)
+		fmt.Fprint(r.out, "\nclaude> ")
+		msg, err := r.llm.Stream(ctx, r.conv, tools, r.out)
+		if err != nil {
+			if round == 0 {
+				// Take the user turn back so a retry does not stack duplicates.
+				r.conv.RemoveLast()
+			}
+			return err
+		}
+		fmt.Fprintln(r.out)
+
+		// The assistant turn is appended before the tools run, because a
+		// tool_use block must already be in history when its tool_result
+		// arrives.
+		r.conv.Append(msg.ToParam())
+
+		if msg.StopReason != anthropic.StopReasonToolUse {
+			return nil
+		}
+
+		results := r.runTools(ctx, msg)
+		if len(results) == 0 {
+			// Nothing to answer with, so the turn is over.
+			return nil
+		}
+		// Every result goes back in one user message. Splitting them teaches
+		// the model to stop making parallel calls.
+		r.conv.AddUserBlocks(results...)
+	}
+
+	fmt.Fprintf(r.out, "\nstopped after %d rounds of tool calls\n", r.maxRounds)
+	return nil
 }
 
-// Tools and afterMessage are the seams the tool-use loop plugs into later.
-// Until then the chatbot is a plain conversational client.
-func (r *REPL) Tools() []anthropic.ToolUnionParam { return nil }
-
-func (r *REPL) afterMessage(context.Context, *anthropic.Message) error { return nil }
+// Tools is what the model is offered. Nothing is advertised without a host,
+// which keeps the chatbot usable as a plain assistant.
+func (r *REPL) Tools() []anthropic.ToolUnionParam {
+	if r.host == nil {
+		return nil
+	}
+	return r.host.Tools()
+}
 
 func (r *REPL) banner() {
 	fmt.Fprintf(r.out, "airline mcp chatbot, model %s\n", r.llm.Model())
@@ -189,6 +243,8 @@ func (r *REPL) cmdHistory(context.Context, string) (bool, error) {
 		return false, nil
 	}
 	fmt.Fprintf(r.out, "%d message(s) in history, all resent on every request\n", n)
+	fmt.Fprintf(r.out, "roughly %d tokens against a budget of %d\n",
+		r.conv.EstimatedTokens(), r.llm.ContextLimit())
 	return false, nil
 }
 

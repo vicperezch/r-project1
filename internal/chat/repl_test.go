@@ -22,9 +22,26 @@ type stubLLM struct {
 	calls         int
 	historySizes  []int
 	lastUserInput string
+
+	fitDrops int
+	fitErr   error
+	fitCalls int
 }
 
 func (s *stubLLM) Model() string { return "stub-model" }
+
+func (s *stubLLM) ContextLimit() int64 { return llm.DefaultContextLimit }
+
+func (s *stubLLM) Fit(_ context.Context, conv *llm.Conversation, _ []anthropic.ToolUnionParam) (int, error) {
+	s.fitCalls++
+	if s.fitErr != nil {
+		return 0, s.fitErr
+	}
+	if s.fitDrops > 0 {
+		return conv.DropFirst(s.fitDrops), nil
+	}
+	return 0, nil
+}
 
 func (s *stubLLM) Stream(_ context.Context, conv *llm.Conversation, _ []anthropic.ToolUnionParam, out io.Writer) (*anthropic.Message, error) {
 	s.calls++
@@ -195,5 +212,44 @@ func TestHistoryCommandReportsTurnCount(t *testing.T) {
 	}
 	if !strings.Contains(out, "2 message(s) in history") {
 		t.Errorf("expected a turn count:\n%s", out)
+	}
+}
+
+func TestContextTrimmingIsReportedAndHappensBeforeEachRequest(t *testing.T) {
+	s := &stubLLM{reply: "ok", fitDrops: 1}
+	var out strings.Builder
+	r := New(s, strings.NewReader("one\ntwo\n"), &out)
+
+	// Seed history so there is something to drop.
+	r.Conversation().AddUser("older turn")
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if s.fitCalls != 2 {
+		t.Errorf("Fit called %d times, want once per request", s.fitCalls)
+	}
+	if !strings.Contains(out.String(), "[context] dropped") {
+		t.Errorf("trimming was not reported to the user:\n%s", out.String())
+	}
+}
+
+func TestAFailureToMeasureContextDoesNotEndTheTurn(t *testing.T) {
+	s := &stubLLM{reply: "ok", fitErr: errors.New("count unavailable")}
+	_, out := run(t, s, "a question\n")
+
+	if s.calls != 1 {
+		t.Errorf("the request should still have been made, calls %d", s.calls)
+	}
+	if !strings.Contains(out, "could not measure context") {
+		t.Errorf("the warning was not shown:\n%s", out)
+	}
+}
+
+func TestHistoryCommandReportsTokenBudget(t *testing.T) {
+	s := &stubLLM{reply: "ok"}
+	_, out := run(t, s, "a question\n/history\n")
+	if !strings.Contains(out, "budget of") {
+		t.Errorf("history should report the context budget:\n%s", out)
 	}
 }

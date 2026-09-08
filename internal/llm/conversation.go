@@ -44,6 +44,21 @@ func (c *Conversation) Messages() []anthropic.MessageParam {
 	return c.messages
 }
 
+// DropFirst removes the oldest n messages and reports how many went.
+func (c *Conversation) DropFirst(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	if n >= len(c.messages) {
+		n = len(c.messages)
+	}
+	c.messages = c.messages[n:]
+	return n
+}
+
 func (c *Conversation) Len() int { return len(c.messages) }
+
+// EstimatedTokens is a cheap local approximation, used for display.
+func (c *Conversation) EstimatedTokens() int64 { return estimateTokens(c.messages) }
 
 func (c *Conversation) Reset() { c.messages = nil }

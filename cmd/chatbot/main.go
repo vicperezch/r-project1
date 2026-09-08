@@ -29,10 +29,11 @@ When you list flights or passengers, keep the tool's own formatting, it is alrea
 You also answer ordinary questions that have nothing to do with the airline.`
 
 type options struct {
-	serversPath string
-	model       string
-	logDir      string
-	autoApprove bool
+	serversPath  string
+	model        string
+	logDir       string
+	autoApprove  bool
+	contextLimit int64
 }
 
 func parseFlags() options {
@@ -41,6 +42,8 @@ func parseFlags() options {
 	flag.StringVar(&o.model, "model", envOr("CHATBOT_MODEL", llm.DefaultModel), "Claude model id")
 	flag.StringVar(&o.logDir, "log-dir", envOr("CHATBOT_LOG_DIR", "logs"), "directory for MCP interaction logs")
 	flag.BoolVar(&o.autoApprove, "yes", false, "skip the confirmation prompt for state-changing tools")
+	flag.Int64Var(&o.contextLimit, "context-tokens", llm.DefaultContextLimit,
+		"token budget for the resent history, lower it to watch trimming work")
 	flag.Parse()
 	return o
 }
@@ -63,8 +66,11 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	client := llm.New(llm.Config{Model: o.model, System: systemPrompt})
+	client := llm.New(llm.Config{
+		Model: o.model, System: systemPrompt, ContextLimit: o.contextLimit,
+	})
 	repl := chat.New(client, os.Stdin, os.Stdout)
+	repl.SetAutoApprove(o.autoApprove)
 
 	logger, err := mcplog.New(o.logDir)
 	if err != nil {

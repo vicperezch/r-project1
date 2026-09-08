@@ -20,13 +20,20 @@ type Config struct {
 	Model     string
 	MaxTokens int64
 	System    string
+	// ContextLimit is the token budget for resent history. Zero means
+	// DefaultContextLimit.
+	ContextLimit int64
 }
 
 type Client struct {
-	api       anthropic.Client
-	model     string
-	maxTokens int64
-	system    []anthropic.TextBlockParam
+	api          anthropic.Client
+	model        string
+	maxTokens    int64
+	system       []anthropic.TextBlockParam
+	contextLimit int64
+
+	// countTokens is a field so tests can measure without a network call.
+	countTokens func(context.Context, *Conversation, []anthropic.ToolUnionParam) (int64, error)
 }
 
 func New(cfg Config) *Client {
@@ -36,18 +43,25 @@ func New(cfg Config) *Client {
 	if cfg.MaxTokens == 0 {
 		cfg.MaxTokens = DefaultMaxTokens
 	}
+	if cfg.ContextLimit <= 0 {
+		cfg.ContextLimit = DefaultContextLimit
+	}
 	c := &Client{
-		api:       anthropic.NewClient(),
-		model:     cfg.Model,
-		maxTokens: cfg.MaxTokens,
+		api:          anthropic.NewClient(),
+		model:        cfg.Model,
+		maxTokens:    cfg.MaxTokens,
+		contextLimit: cfg.ContextLimit,
 	}
 	if cfg.System != "" {
 		c.system = []anthropic.TextBlockParam{{Text: cfg.System}}
 	}
+	c.countTokens = c.apiCountTokens
 	return c
 }
 
 func (c *Client) Model() string { return c.model }
+
+func (c *Client) ContextLimit() int64 { return c.contextLimit }
 
 // Stream sends the whole conversation and writes assistant text to out as it
 // arrives. The accumulated message is returned so the caller can append it to
